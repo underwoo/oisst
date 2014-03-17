@@ -1,25 +1,50 @@
 #!/bin/sh -xe
 
+echoerr() {
+    echo "$@" 1>&2
+}
+
 # Set the umask for world readable
 umask 022
 
-# Setup the environment, and Ferret
-# Ferret module is only needed for me (Seth.Underwood)
-. /usr/local/Modules/3.1.6/init/sh
-module use -a /home/sdu/privatemodules
-module load netcdf/4.2
-module load nco
-module load ferret
+# Location of this script
+BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Get the current year.  This is the year to process.
-year=$( date '+%Y' )
+# Source the env.sh file for the current environment
+. ${BIN_DIR}/env.sh
 
 # Useful PATHS
-BASE_DIR=/local2/home/oisst
-DATA_DIR=/local/home/oisst_qc/data
-RAW_DIR=${BASE_DIR}/raw/${year}
-WORK_DIR=${BASE_DIR}/work
-OUT_DIR=${BASE_DIR}/NetCDF
+DATA_DIR=$( dirname ${BIN_DIR} )/data
+GRID_SPEC=${DATA_DIR}/grid_spec.nc
+
+# Check for the existance of the grid_spec file
+if [[ ! -e ${GRID_SPEC} ]]; then
+    echoerr "Cannot find the grid specification file ${GRID_SPEC}."
+    exit 1
+fi
+
+# Check for the existance of the work and raw data directories
+if [[ -z ${RAW_DIR} ]]; then
+    echoerr "The variable RAW_DATA needs to be set in the configuration file ${BIN_DIR}/env.sh."
+    exit 1
+elif [[ ! -e ${RAW_DIR} ]]; then
+    echoerr "Raw data not available"
+    exit 1
+fi
+
+# Create the output directory
+if [[ -z ${OUT_DIR} ]]; then
+    echoerr "The variable OUT_DIR needs to be set in the configuration file ${BIN_DIR}/env.sh."
+    exit 1
+elif [ ! -e ${OUT_DIR} ]; then
+    mkdir -p ${OUT_DIR}
+fi
+
+# Verify the WORK_DIR is set
+if [[ -z ${WORK_DIR} ]]; then
+    echoerr "The variable WORK_DIR needs to be set in the configuration file ${BIN_DIR}/env.sh."
+    exit 1
+fi
 
 # Remove old work directory, and recreate.
 if [ -e ${WORK_DIR} ]; then
@@ -34,65 +59,71 @@ fi
 
 cd ${WORK_DIR}
 
-# Get a list of months to process
-months=
-for f in $( ls -1 ${RAW_DIR}/*.${year}????.nc ${RAW_DIR}/*.${year}????_preliminary.nc ); do
-    file=$(basename $f)
-    months="${months} ${file:18:2}"
-done
-# Get a unique value for each month
-months=$( echo ${months} | sed -e 's/ /\n/g' | sort -u )
+# Need everything for the previous month up the the first of the current month
+# That is, we need to process ${yearPrev}0101 - ${yearCur}${monCur}01.
+yearCur=$( date '+%Y' )
+monCur=$( date '+%m' )
+# Get the year and month for current date - 1month
+yearPrev=$( date -d "${yearCur}-${monCur}-01 - 1month" '+%Y' )
+monPrev=$( date -d "${yearCur}-${monCur}-01 - 1month" '+%m' )
 
-# Combine the daily files into a single file
-# Output file for this step:
-sst_mean="sst.day.mean${year}.v2.nc"
-
-for m in  $months; do
-    # Get the number of days for this month
-    days=
-    for f in $( ls -1 ${RAW_DIR}/*.${year}${m}??.nc ${RAW_DIR}/*.${year}${m}??_preliminary.nc ); do
-	file=$(basename $f)
-	days="${days} ${file:20:2}"
-    done
-    # Get a unique value for each day
-    days=$( echo ${days} | sed -e 's/ /\n/g' | sort -u )
-
-    # Process each file, and combine into a single yearly file.
-    for d in ${days}; do
-	# Need to know the first date processed.
-	if [ -z ${firstDate} ]; then
-	    firstDate="${m}/${d}/${year}"
-	fi
-
-	# Do we need to use the preliminary data?
-	if [ -e ${RAW_DIR}/avhrr-only-v2.${year}${m}${d}.nc ]; then
-	    infile=${RAW_DIR}/avhrr-only-v2.${year}${m}${d}.nc
-	elif [ -e ${RAW_DIR}/avhrr-only-v2.${year}${m}${d}_preliminary.nc ]; then
-	    infile=${RAW_DIR}/avhrr-only-v2.${year}${m}${d}_preliminary.nc
-	else
-	    echo "ERROR: Unable to find file avhrr-only-v2.${year}${m}${d}\*.nc"
-	    exit 1
-	fi
-	ferret <<EOF
-use "${infile}"
-save/app/file="${sst_mean}" sst
-exit
-EOF
-	# Remove the ferret file
-	rm -f ferret*.jnl*
-
-	# Also need to know the last date processed
-	lastDate="${m}/${d}/${year}"
-    done
-done
-
-# Regrid the data for use with CM2 models
-# Convert the start/end Dates from above to d-mmm-yyyy and yymmdd
+# Convert the start/end Dates  to d-mmm-yyyy and yymmdd
+firstDate="${yearPrev}-01-01"
+lastDate="${yearCur}-${monCur}-01"
 sDate=$( date -d $firstDate '+%-d-%b-%Y' )
 eDate=$( date -d $lastDate '+%-d-%b-%Y' )
 s_yymmdd=$( date -d $firstDate '+%y%m%d' )
 e_yymmdd=$( date -d $lastDate '+%y%m%d' )
 
+# Get a list of files, and verify that all days in the range are present
+# $( date -d "2016-$m-01 + 1month - 1day" '+%d' ) get number of days in month
+# inFiles is a list of files to process
+inFiles=''
+
+for m in $( seq -f '%02g' 1 $monPrev ); do
+    daysInMonth=$( date -d "${yearPrev}-${m}-01 + 1month - 1day" '+%d' )
+
+    for d in $( seq -f '%02g' 1 $daysInMonth ); do
+	f_base=${RAW_DIR}/${yearPrev}/avhrr-only-v2.${yearPrev}${m}${d}
+	# Do we need to use the preliminary data?
+	if [ -e ${f_base}.nc ]; then
+	    inFiles="${inFiles} ${f_base}.nc"
+	elif [ -e ${f_base}_preliminary.nc ]; then
+	    inFiles="${inFiles} ${f_base}_preliminary.nc"
+	else
+	    echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${m}-${d}"
+	    exit 1
+	fi
+    done
+done
+
+# Check for the existance of ${yearCur}-${monCur}-01
+f_base=${RAW_DIR}/${yearCur}/avhrr-only-v2.${yearPrev}${monCur}01
+if [ -e ${f_base}.nc ]; then
+    inFiles="${inFiles} ${f_base}.nc"
+elif [ -e ${f_base}_preliminary.nc ]; then
+    inFiles="${inFiles} ${f_base}_preliminary.nc"
+else
+    echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${m}-${d}"
+    exit 1
+fi
+
+# Combine the daily files into a single file
+# Output file for this step:
+sst_mean="sst.day.mean${year}.v2.nc"
+
+for f in $inFiles; do
+    ferret <<EOF
+use "${infile}"
+save/app/file="${sst_mean}" sst
+exit
+EOF
+
+    # Remove the ferret file
+    rm -f ferret*.jnl*
+done
+
+# Regrid the data for use with CM2 models
 # Output file for this step:
 sst_cm2=sstcm2_daily_${s_yymmdd}_${e_yymmdd}.nc
 
