@@ -10,7 +10,11 @@ umask 022
 # Location of this script
 BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Source the env.sh file for the current environment
+# Source the env.sh file for the current environment, or exit if it doesn't exit.
+if [[ ! -e ${BIN_DIR}/env.sh ]]; then
+    echoerr "ERROR: Environment script '${BIN_DIR}/env.sh' doesn't exits."
+    exit 1
+fi
 . ${BIN_DIR}/env.sh
 
 # Useful PATHS
