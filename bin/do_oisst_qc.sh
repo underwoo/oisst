@@ -118,7 +118,7 @@ sst_mean="sst.day.mean${year}.v2.nc"
 
 for f in $inFiles; do
     ferret <<EOF
-use "${infile}"
+use "${f}"
 save/app/file="${sst_mean}" sst
 exit
 EOF
