@@ -79,6 +79,14 @@ eDate=$( date -d $lastDate '+%-d-%b-%Y' )
 s_yymmdd=$( date -d $firstDate '+%y%m%d' )
 e_yymmdd=$( date -d $lastDate '+%y%m%d' )
 
+# Output file
+sst_cm2=sstcm2_daily_${s_yymmdd}_${e_yymmdd}.nc
+# Check of existance of the output file.  If it exists, exit
+if [[ -e ${OUT_DIR}/${sst_cm2} ]]; then
+    echoerr "File '${OUT_DIR}/${sst_cm2}' already exists.  Not processing."
+    exit 0
+fi
+
 # Get a list of files, and verify that all days in the range are present
 # $( date -d "2016-$m-01 + 1month - 1day" '+%d' ) get number of days in month
 # inFiles is a list of files to process
@@ -128,9 +136,6 @@ EOF
 done
 
 # Regrid the data for use with CM2 models
-# Output file for this step:
-sst_cm2=sstcm2_daily_${s_yymmdd}_${e_yymmdd}.nc
-
 ferret <<EOF
 set memory/size=1280
 use "${DATA_DIR}/grid_spec.nc"
