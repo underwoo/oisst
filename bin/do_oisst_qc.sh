@@ -81,9 +81,10 @@ e_yymmdd=$( date -d $lastDate '+%y%m%d' )
 
 # Output file
 sst_cm2=sstcm2_daily_${s_yymmdd}_${e_yymmdd}.nc
+OUTFILE=${OUT_DIR}/${sst_cm2}
 # Check of existance of the output file.  If it exists, exit
-if [[ -e ${OUT_DIR}/${sst_cm2} ]]; then
-    echoerr "File '${OUT_DIR}/${sst_cm2}' already exists.  Not processing."
+if [[ -e ${OUTFILE} ]]; then
+    echoerr "File '${OUTFILE}' already exists.  Not processing."
     exit 0
 fi
 
@@ -121,6 +122,11 @@ else
 fi
 
 # Combine the daily files into a single file
+# Keep a history of which input files were used in the $OUTFILE.log file
+if [[ -e ${OUTFILE}.log ]]; then
+    rm -f ${OUTFILE}.log
+fi
+
 # Output file for this step:
 sst_mean="sst.day.mean${year}.v2.nc"
 
@@ -131,6 +137,7 @@ save/app/file="${sst_mean}" sst
 exit
 EOF
 
+    echo ${f} >> ${OUTFILE}.log
     # Remove the ferret file
     rm -f ferret*.jnl*
 done
@@ -160,4 +167,13 @@ ncwa -O -h -a ZLEV tmp1.nc tmp2.nc
 ncrcat -O -h -x -v ZLEV tmp2.nc ${sst_cm2}
 
 # Save file
-cp ${sst_cm2} ${OUT_DIR}/${sst_cm2}
+cp ${sst_cm2} ${OUTFILE}
+touch ${OUTFILE}.OK
+
+# Copy file to remote site
+if [[ ! -z ${XFER_TARGET} ]]; then
+    for f in ${OUTFILE} ${OUTFILE}.OK ${OUTFILE}.log
+    do
+	$XFER_COMMAND ${f} ${XFER_TARGET}
+    done
+fi
