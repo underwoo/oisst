@@ -83,7 +83,7 @@ e_yymmdd=$( date -d $lastDate '+%y%m%d' )
 sst_cm2=sstcm2_daily_${s_yymmdd}_${e_yymmdd}.nc
 OUTFILE=${OUT_DIR}/${sst_cm2}
 # Check of existance of the output file.  If it exists, exit
-if [[ -e ${OUTFILE} ]]; then
+if [[ -e ${OUTFILE}.OK ]]; then
     echoerr "File '${OUTFILE}' already exists.  Not processing."
     exit 0
 fi
@@ -117,7 +117,7 @@ if [ -e ${f_base}.nc ]; then
 elif [ -e ${f_base}_preliminary.nc ]; then
     inFiles="${inFiles} ${f_base}_preliminary.nc"
 else
-    echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${m}-${d}"
+    echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${monCur}-01"
     exit 1
 fi
 
