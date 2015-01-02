@@ -111,13 +111,13 @@ for m in $( seq -f '%02g' 1 $monPrev ); do
 done
 
 # Check for the existance of ${yearCur}-${monCur}-01
-f_base=${RAW_DIR}/${yearCur}/avhrr-only-v2.${yearPrev}${monCur}01
+f_base=${RAW_DIR}/${yearCur}/avhrr-only-v2.${yearCur}${monCur}01
 if [ -e ${f_base}.nc ]; then
     inFiles="${inFiles} ${f_base}.nc"
 elif [ -e ${f_base}_preliminary.nc ]; then
     inFiles="${inFiles} ${f_base}_preliminary.nc"
 else
-    echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${m}-${d}"
+    echoerr "ERROR: Unable to find raw data file file for ${yearCur}-${m}-${d}"
     exit 1
 fi
 
