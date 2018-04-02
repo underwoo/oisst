@@ -4,6 +4,58 @@ echoerr() {
     echo "$@" 1>&2
 }
 
+# Verify the time passed in fits the YYYYMM format.
+#
+# verifyTime "YYYYMM"
+verifyTime () {
+    local timeString=$@
+
+    len=$( expr length "${timeString}" )
+    if [[ $len -ne 6 ]]; then
+        echoerr "FATAL: Time string is not in the correct format.  Expected 'YYYYMM'."
+        echoerr "FATAL: Got '$timeString'."
+        exit 65
+    fi
+
+    local yr=$( expr substr "${timeString}" 1 4 )
+    local mo=$( expr substr "${timeString}" 5 2 )
+    if [[ $yr -le 0 ]]; then
+        echoerr "FATAL: Not a valid year.  Year must be greater than 0.  Got '$yr'."
+        exit 65
+    fi
+    # The "10#" is needed to keep sh from using ocal numbers
+    if [[ "10#$mo" -lt 1 || "10#$mo" -gt 12 ]]; then
+        echoerr "FATAL: Not a valid month.  Month must be in the range [1,12].  Got '%mo'."
+        exit 65
+    fi
+}
+
+usage() {
+    echo "Usage: do_oisst_qc.sh [OPTIONS]"
+}
+
+help () {
+    usage
+    echo ""
+    echo "Options:"
+    echo "     -h"
+    echo "          Display usage information."
+    echo ""
+    echo "     -o <out_file>"
+    echo "          Write the output to file <out_file> instead of default file"
+    echo "          location."
+    echo ""
+    echo "     -t <YYYYMM>"
+    echo "          Create OISST file for month MM and year YYYY"
+    echo "          Default: Current year/month"
+    echo ""
+    echo "     -i <file>"
+    echo "          Use the files in <file> to generate a specific file.  Must use"
+    echo "          the -o and -t options, otherwise the script may think the file"
+    echo "          has already been generated."
+    echo ""
+}
+
 # Set the umask for world readable
 umask 022
 
@@ -14,6 +66,38 @@ ulimit -a
 
 # Location of this script
 BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Default settings for year/month
+# Need everything for the previous month up the the first of the current month
+# That is, we need to process ${yearPrev}0101 - ${yearCur}${monCur}01.
+yearCur=$( date '+%Y' )
+monCur=$( date '+%m' )
+
+# Read in command line options
+while getopts :ho:t:i: OPT; do
+    case "$OPT" in
+        h)
+            help
+            exit 0
+            ;;
+        o)
+            OUTFILE=${OPTARG}
+            ;;
+        t)
+            verifyTime ${OPTARG}
+            yearCur=$( expr substr "${OPTARG}" 1 4 )
+            monCur=$( expr substr "${OPTARG}" 5 2 )
+            ;;
+        i)
+            inLogFile=${OPTARG}
+            ;;
+        \?)
+            echoerr "Unknown option:" $${OPTARG}
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Source the env.sh file for the current environment, or exit if it doesn't exit.
 if [[ ! -e ${BIN_DIR}/env.sh ]]; then
@@ -66,12 +150,6 @@ if [ ! -e ${OUT_DIR} ]; then
     mkdir -p ${OUT_DIR}
 fi
 
-cd ${WORK_DIR}
-
-# Need everything for the previous month up the the first of the current month
-# That is, we need to process ${yearPrev}0101 - ${yearCur}${monCur}01.
-yearCur=$( date '+%Y' )
-monCur=$( date '+%m' )
 # Get the year and month for current date - 1month
 yearPrev=$( date -d "${yearCur}-${monCur}-01 - 1month" '+%Y' )
 monPrev=$( date -d "${yearCur}-${monCur}-01 - 1month" '+%m' )
@@ -86,7 +164,14 @@ e_yymmdd=$( date -d $lastDate '+%y%m%d' )
 
 # Output file
 sst_cm2=sstcm2_daily_${s_yymmdd}_${e_yymmdd}.nc
-OUTFILE=${OUT_DIR}/${sst_cm2}
+if [[ -z $OUTFILE ]]; then
+    # Set the default OUTFILE if not set by option above
+    OUTFILE=${OUT_DIR}/${sst_cm2}
+fi
+
+# Begin actual work, need to be in WORK_DIR
+cd ${WORK_DIR}
+
 # Check of existance of the output file.  If it exists, exit
 if [[ -e ${OUTFILE}.OK ]]; then
     echoerr "File '${OUTFILE}' already exists.  Not processing."
@@ -96,32 +181,38 @@ else
     # inFiles is a list of files to process
     inFiles=''
 
-    for m in $( seq -f '%02g' 1 $monPrev ); do
-        daysInMonth=$( date -d "${yearPrev}-${m}-01 + 1month - 1day" '+%d' )
+    if [[ -z $inLogFile ]]; then
+        # Normal processing new files
+        for m in $( seq -f '%02g' 1 $monPrev ); do
+            daysInMonth=$( date -d "${yearPrev}-${m}-01 + 1month - 1day" '+%d' )
 
-        for d in $( seq -f '%02g' 1 $daysInMonth ); do
-            f_base=${RAW_DIR}/${yearPrev}/avhrr-only-v2.${yearPrev}${m}${d}
-            # Do we need to use the preliminary data?
-            if [ -e ${f_base}.nc ]; then
-                inFiles="${inFiles} ${f_base}.nc"
-            elif [ -e ${f_base}_preliminary.nc ]; then
-                inFiles="${inFiles} ${f_base}_preliminary.nc"
-            else
-                echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${m}-${d}"
-                exit 1
-            fi
+            for d in $( seq -f '%02g' 1 $daysInMonth ); do
+                f_base=${RAW_DIR}/${yearPrev}/avhrr-only-v2.${yearPrev}${m}${d}
+                # Do we need to use the preliminary data?
+                if [ -e ${f_base}.nc ]; then
+                    inFiles="${inFiles} ${f_base}.nc"
+                elif [ -e ${f_base}_preliminary.nc ]; then
+                    inFiles="${inFiles} ${f_base}_preliminary.nc"
+                else
+                    echoerr "ERROR: Unable to find raw data file file for ${yearPrev}-${m}-${d}"
+                    exit 1
+                fi
+            done
         done
-    done
 
-    # Check for the existance of ${yearCur}-${monCur}-01
-    f_base=${RAW_DIR}/${yearCur}/avhrr-only-v2.${yearCur}${monCur}01
-    if [ -e ${f_base}.nc ]; then
-        inFiles="${inFiles} ${f_base}.nc"
-    elif [ -e ${f_base}_preliminary.nc ]; then
-        inFiles="${inFiles} ${f_base}_preliminary.nc"
+        # Check for the existance of ${yearCur}-${monCur}-01
+        f_base=${RAW_DIR}/${yearCur}/avhrr-only-v2.${yearCur}${monCur}01
+        if [ -e ${f_base}.nc ]; then
+            inFiles="${inFiles} ${f_base}.nc"
+        elif [ -e ${f_base}_preliminary.nc ]; then
+            inFiles="${inFiles} ${f_base}_preliminary.nc"
+        else
+            echoerr "ERROR: Unable to find raw data file file for ${yearCur}-${monCur}-01"
+            exit 1
+        fi
     else
-        echoerr "ERROR: Unable to find raw data file file for ${yearCur}-${monCur}-01"
-        exit 1
+        # Process files in $inLogFile
+        inFiles=$( cat $inLogFile )
     fi
 
     # Combine the daily files into a single file
